@@ -1,6 +1,6 @@
 # gemini-bot-py
 
-`discord.py` で実装した Gemini 連携 Discord Bot です。  
+`discord.py` で実装した Gemini 連携 Discord Bot です。家庭内で使用しているDiscordサーバー内で運用しています。pockyと言うオカメインコを飼っているのでシステムプロンプトからpockyの性格をインストールしてpockyと思って話しかけています。かわいいです。
 本リポジトリは **GCP（Compute Engine）常時運用**を前提にしています。
 
 - コマンド: `/ask`, `/pocky`
