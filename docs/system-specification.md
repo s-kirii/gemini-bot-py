@@ -1,90 +1,88 @@
-# gemini-bot-py システム仕様書
+# gemini-bot-py システム仕様書（GCP運用版）
 
-## 1. 目的
-この文書は `gemini-bot-py` の実装構成と処理仕様を定義する。
-対象は Python 版 Discord Bot（`discord.py`）で、Gemini API を使った対話応答を行う。
+## 1. 文書の目的
+
+本書は `gemini-bot-py` の実装仕様と、GCP（Compute Engine）での常時運用構成を定義する。
 
 ## 2. システム全体像
 
-### 2.1 役割
-- Discord からスラッシュコマンド（`/ask`, `/pocky`）を受け取る
-- ユーザーごとの会話履歴をローカル JSON に保存する
-- Gemini API（`generateContent`）に履歴付きで問い合わせる
-- Discord の deferred response を更新して最終応答を返す
+### 2.1 機能要約
 
-### 2.2 構成図（Mermaid）
+- Discord スラッシュコマンド（`/ask`, `/pocky`）を処理
+- Gemini API で応答生成（`google_search` ツール有効）
+- 会話履歴を `data/history.json` に保存
+- 指定サーバー（`DISCORD_SERVER_ID`）以外は実行拒否
+- GCP VM 上で `systemd` 常駐運用
+
+### 2.2 GCP込み構成図
+
 ```mermaid
 flowchart LR
   U[Discord User]
-  D[Discord API / Gateway]
-  M[main.py]
-  C[bot/config.py\nload_config]
-  B[bot/discord_bot.py\nGeminiDiscordBot]
-  G[bot/gemini_client.py\nGeminiClient]
-  H[bot/history_store.py\nHistoryStore]
-  F[(data/history.json)]
-  P[(system_prompt.txt)]
-  X[Gemini API]
+  DC[Discord API / Gateway]
+  GCP[GCP Project]
+  VM[Compute Engine VM\nUbuntu + systemd]
+  APP[gemini-bot-py\nmain.py]
+  BOT[GeminiDiscordBot]
+  GEM[Gemini API]
+  FILE[(data/history.json)]
+  ENV[.env / system_prompt.txt]
 
-  U --> D
-  D --> B
-  M --> C
-  M --> P
-  M --> H
-  M --> G
-  M --> B
-  B --> H
-  H --> F
-  B --> G
-  G --> X
+  U --> DC
+  DC --> BOT
+  GCP --> VM
+  VM --> APP
+  APP --> ENV
+  APP --> BOT
+  BOT --> GEM
+  BOT --> FILE
 ```
 
-## 3. ファイル構成と役割
+## 3. リポジトリ構成と役割
+
 - `main.py`
   - エントリポイント
-  - 設定ロード、システムプロンプト検証、依存オブジェクト生成、Bot 起動
+  - 設定読込、依存初期化、Bot起動
 - `bot/config.py`
-  - `.env` 読み込み
-  - 必須/任意設定を `AppConfig` に集約
+  - `.env` から設定ロード
+  - 必須値検証、`AppConfig` 生成
 - `bot/discord_bot.py`
-  - Discord スラッシュコマンド登録
-  - コマンド処理本体（defer、履歴取得、Gemini 呼び出し、返信更新）
+  - `/ask` `/pocky` 登録
+  - Interaction処理（defer、履歴、Gemini、返信）
 - `bot/gemini_client.py`
   - Gemini `generateContent` 呼び出し
-  - API レスポンスからテキスト抽出
 - `bot/history_store.py`
-  - 会話履歴の読み書き
-  - ユーザー単位保存と件数制限
-- `tests/test_config.py`
-  - `FAMILY_IDxx/FAMILY_NAMExx` のマッピング組み立て検証
-- `tests/test_history_store.py`
-  - 履歴保持件数（最新 N 件）ロジック検証
+  - JSON履歴の読み書き
+- `README.md`
+  - GCPデプロイと運用手順
+- `tests/test_config.py`, `tests/test_history_store.py`
+  - 主要ロジックの最小テスト
 
 ## 4. クラス・関数仕様
 
 ### 4.1 `main.py`
 
 #### `async_main() -> None`
-- 目的: アプリ実行に必要な依存を構築して Bot を起動する
-- 主な処理:
-  - `load_config()` で設定読込
-  - `system_prompt.txt` 存在/空文字チェック
-  - `HistoryStore` と `GeminiClient` を生成
-  - `GeminiDiscordBot.start()` を実行
+- 役割: 実行に必要な依存を構築して Bot を開始
+- 処理:
+  - `load_config()`
+  - `system_prompt.txt` の存在/空チェック
+  - `HistoryStore`, `GeminiClient`, `GeminiDiscordBot` を生成
+  - `bot.start(config.discord_token)`
 - 例外:
-  - 設定不備時に `ConfigError` を送出
+  - 設定不備で `ConfigError`
 
 #### `main() -> None`
-- 目的: 非同期エントリポイントのラッパー
-- 主な処理:
+- 役割: 非同期起動のラッパー
+- 処理:
   - `asyncio.run(async_main())`
   - `ConfigError` を `SystemExit` に変換
 
 ### 4.2 `bot/config.py`
 
 #### `AppConfig`
-- 目的: 実行設定の不変データ構造
-- フィールド:
+- 役割: 実行設定の不変オブジェクト
+- 主要フィールド:
   - `discord_token: str`
   - `discord_server_id: int`
   - `gemini_api_key: str`
@@ -95,199 +93,191 @@ flowchart LR
   - `family_name_map: dict[str, str]`
 
 #### `ConfigError(RuntimeError)`
-- 目的: 設定関連エラーを表す例外型
+- 役割: 設定エラーの専用例外
 
 #### `_required(name: str) -> str`
-- 目的: 必須環境変数の取得
-- 引数:
-  - `name`: 環境変数名
-- 戻り値:
-  - 設定済みの値
-- 例外:
-  - 未設定時 `ConfigError`
+- 役割: 必須環境変数取得
+- 引数: `name`（環境変数名）
+- 戻り値: 設定値
+- 例外: 未設定時 `ConfigError`
 
 #### `_build_family_map() -> dict[str, str]`
-- 目的: `FAMILY_IDxx` と `FAMILY_NAMExx` を対応付ける
-- 入力源:
-  - `os.environ`
-- 戻り値:
-  - `{user_id: display_name}` 形式の辞書
+- 役割: `FAMILY_IDxx/FAMILY_NAMExx` から表示名辞書を構築
+- 戻り値: `{discord_user_id: display_name}`
 
 #### `load_config() -> AppConfig`
-- 目的: `.env` を読み込んで `AppConfig` を構築
-- 主な処理:
-  - 必須キー検証（`DISCORD_TOKEN`, `DISCORD_SERVER_ID`, `GEMINI_API_KEY`）
-  - 任意値にデフォルト適用
-  - `MAX_HISTORY_ITEMS >= 2` のバリデーション
+- 役割: `.env` 読み込みと設定生成
+- 処理:
+  - 必須値検証
+  - 任意値にデフォルト設定
+  - `MAX_HISTORY_ITEMS >= 2` を保証
 
 ### 4.3 `bot/discord_bot.py`
 
 #### `class GeminiDiscordBot(commands.Bot)`
 
-#### `__init__(config: AppConfig, history_store: HistoryStore, gemini_client: GeminiClient) -> None`
-- 目的: Discord Bot 本体初期化
-- 主な処理:
-  - 必要最小限の Intents（guilds）設定
-  - 依存オブジェクト保持
+#### `__init__(config, history_store, gemini_client) -> None`
+- 役割: Bot初期化
+- 処理: Intents最小設定、依存保持
 
 #### `setup_hook() -> None`
-- 目的: アプリコマンド登録と同期
-- 主な処理:
-  - `/ask` と `/pocky` を登録
-  - `copy_global_to(guild=...)` で guild へ複製
-  - `sync(guild=...)` と `sync()` を実行
-  - 同期結果（コマンド名）をログ出力
+- 役割: コマンド登録と同期
+- 処理:
+  - `/ask`, `/pocky` を登録
+  - `copy_global_to(guild=...)`
+  - `sync(guild=...)`, `sync()`
+  - 同期結果ログ出力
 
-#### `_handle_ask(interaction: discord.Interaction, message: str) -> None`
-- 目的: コマンド共通の応答処理
+#### `_handle_ask(interaction, message) -> None`
+- 役割: コマンド共通処理
 - 引数:
-  - `interaction`: Discord interaction
-  - `message`: ユーザー入力
-- 主な処理:
-  - サーバー ID 制限チェック
+  - `interaction: discord.Interaction`
+  - `message: str`
+- 処理:
+  - サーバーID検証
   - `defer(thinking=True)`
-  - ユーザー表示名決定
-  - 履歴取得 `HistoryStore.get()`
-  - 生成 `GeminiClient.generate_response()`
-  - 履歴保存 `HistoryStore.append_turn()`
-  - `edit_original_response()` で返答更新
+  - 表示名解決
+  - 履歴取得
+  - Gemini応答生成
+  - 履歴保存
+  - `edit_original_response` で返答
 - 例外時:
-  - エラーログ出力
-  - `オカメパニック: ...` を返信
+  - ログ出力
+  - `オカメパニック: ...` を返答
 
-#### `_resolve_display_name(user: discord.abc.User) -> str`
-- 目的: 表示名の解決
+#### `_resolve_display_name(user) -> str`
+- 役割: 表示名解決
 - 優先順位:
-  - `family_name_map[user_id]`
-  - `user.global_name`
-  - `user.name`
+  - `family_name_map`
+  - `global_name`
+  - `name`
 
 #### `_fit_discord_message(content: str) -> str`
-- 目的: Discord 文字数上限（2000）への収まり保証
-- 処理:
-  - 2000 文字超過時は末尾 `...` を付与して切り詰め
+- 役割: 2000文字制限に収める
+- 戻り値: 必要に応じて末尾 `...` 付き文字列
 
 ### 4.4 `bot/gemini_client.py`
 
 #### `class GeminiClient`
 
-#### `__init__(api_key: str, model: str, system_prompt: str, session: aiohttp.ClientSession) -> None`
-- 目的: Gemini API 呼び出しの依存保持
+#### `__init__(api_key, model, system_prompt, session) -> None`
+- 役割: Gemini API 呼び出し依存を保持
 
-#### `generate_response(prompt: str, history: list[dict[str, Any]]) -> str`
-- 目的: Gemini API から応答文を取得
+#### `generate_response(prompt, history) -> str`
+- 役割: Gemini APIから応答取得
 - 引数:
-  - `prompt`: 今回のユーザー入力（表示名付き）
-  - `history`: 既存会話履歴
+  - `prompt: str`
+  - `history: list[dict[str, Any]]`
 - 処理:
-  - `POST /v1beta/models/{model}:generateContent`
-  - `system_instruction`, `contents`, `tools:[{google_search:{}}]` を送信
-  - HTTPエラー時は `RuntimeError`
-  - `_extract_text()` で本文抽出
+  - `generateContent` に `system_instruction`, `contents`, `tools` を送信
+  - HTTP失敗時に `RuntimeError`
+- 戻り値:
+  - 抽出済み応答テキスト
 
-#### `_extract_text(data: dict[str, Any]) -> str`
-- 目的: Gemini レスポンス JSON からテキストを抽出
-- 処理:
-  - `candidates[0].content.parts[].text` を連結
-  - 取得不能時は `RuntimeError`
+#### `_extract_text(data) -> str`
+- 役割: Geminiレスポンス JSON から本文抽出
+- 例外:
+  - `candidates` 不在・空本文で `RuntimeError`
 
 ### 4.5 `bot/history_store.py`
 
 #### `class HistoryStore`
 
 #### `__init__(path: Path) -> None`
-- 目的: 履歴ファイルパスと排他制御（`asyncio.Lock`）を初期化
+- 役割: 保存先パスと排他制御の初期化
 
 #### `get(user_id: str) -> list[dict[str, Any]]`
-- 目的: ユーザー履歴取得
-- 戻り値:
-  - 履歴配列（不正データ時は空配列）
+- 役割: 履歴取得
+- 戻り値: ユーザー履歴（不正時は空配列）
 
-#### `append_turn(user_id: str, user_prompt: str, model_response: str, max_items: int) -> list[dict[str, Any]]`
-- 目的: 1往復分（user/model）を追加して保存
+#### `append_turn(user_id, user_prompt, model_response, max_items) -> list[dict[str, Any]]`
+- 役割: 1往復追記と件数制限
 - 処理:
-  - 履歴に `user`, `model` を追加
-  - 末尾 `max_items` 件に切り詰め
-  - ファイルへ原子的に書き込み
-- 戻り値:
-  - 更新後履歴
+  - `user`, `model` レコード追加
+  - `max_items` へ切り詰め
+  - 原子的書き込み
+- 戻り値: 更新後履歴
 
 #### `_read() -> dict[str, Any]`
-- 目的: 履歴ファイル読み込み
-- 備考:
-  - 未作成または JSON 不正時は空辞書を返す
+- 役割: JSON読込
+- 備考: 未作成/JSON破損で空辞書返却
 
 #### `_write(data: dict[str, Any]) -> None`
-- 目的: 履歴ファイル書き込み
-- 処理:
-  - 一時ファイルに書き出し後 `replace` で置換
+- 役割: 一時ファイル経由で安全に保存
 
-## 5. 処理シーケンス（Mermaid）
+## 5. シーケンス図
 
-### 5.1 起動シーケンス
+### 5.1 起動（GCP + systemd）
+
 ```mermaid
 sequenceDiagram
   autonumber
-  participant OS as Runtime
+  participant Admin as Operator
+  participant VM as GCE VM
+  participant SD as systemd
   participant Main as main.py
-  participant Config as config.py
-  participant Prompt as system_prompt.txt
-  participant History as HistoryStore
-  participant Gemini as GeminiClient
-  participant Bot as GeminiDiscordBot
-  participant Discord as Discord Gateway
+  participant Disc as Discord Gateway
 
-  OS->>Main: python main.py
-  Main->>Config: load_config()
-  Config-->>Main: AppConfig
-  Main->>Prompt: read_text()
-  Main->>History: HistoryStore(path)
-  Main->>Gemini: GeminiClient(...)
-  Main->>Bot: GeminiDiscordBot(...)
-  Main->>Bot: bot.start(token)
-  Bot->>Discord: connect + setup_hook()
-  Bot->>Discord: sync(guild), sync(global)
+  Admin->>VM: sudo systemctl start gemini-bot
+  VM->>SD: start unit
+  SD->>Main: ExecStart python main.py
+  Main->>Disc: login + gateway connect
+  Main->>Disc: sync(guild), sync(global)
+  Disc-->>Main: ready
 ```
 
-### 5.2 `/ask` or `/pocky` 実行シーケンス
+### 5.2 コマンド実行（/ask, /pocky）
+
 ```mermaid
 sequenceDiagram
   autonumber
   actor User as Discord User
-  participant Discord as Discord API
+  participant Disc as Discord API
   participant Bot as GeminiDiscordBot
   participant Store as HistoryStore
   participant File as data/history.json
   participant Gemini as Gemini API
 
-  User->>Discord: /ask message:...
-  Discord->>Bot: Interaction(command=ask or pocky)
+  User->>Disc: /pocky message:...
+  Disc->>Bot: interaction
   Bot->>Bot: guild_id check
-  Bot->>Discord: defer(thinking=true)
+  Bot->>Disc: defer(thinking=true)
   Bot->>Store: get(user_id)
   Store->>File: read
   File-->>Store: history
-  Store-->>Bot: history
   Bot->>Gemini: generateContent(system + history + prompt)
-  Gemini-->>Bot: response text
-  Bot->>Store: append_turn(user/model)
-  Store->>File: write (truncate to max_items)
-  Bot->>Discord: edit_original_response(content)
-  Discord-->>User: final response
+  Gemini-->>Bot: answer
+  Bot->>Store: append_turn(...)
+  Store->>File: write
+  Bot->>Disc: edit_original_response
+  Disc-->>User: final message
 ```
 
-## 6. 環境変数
-- 必須
-  - `DISCORD_TOKEN`
-  - `DISCORD_SERVER_ID`
-  - `GEMINI_API_KEY`
-- 任意
-  - `GEMINI_MODEL`（default: `gemini-2.5-flash`）
-  - `SYSTEM_PROMPT_PATH`（default: `system_prompt.txt`）
-  - `HISTORY_PATH`（default: `data/history.json`）
-  - `MAX_HISTORY_ITEMS`（default: `10`）
-  - `FAMILY_IDxx` / `FAMILY_NAMExx`
+## 6. GCP運用仕様
 
-## 7. 既知の運用ポイント
-- スラッシュコマンド切替時は Discord クライアント再起動や再同期が必要な場合がある
-- 本実装はローカル JSON 永続化のため、複数プロセス/複数ホスト共有には外部ストアが必要
+### 6.1 インフラ要件（推奨）
+
+- Compute Engine: `e2-micro`
+- Region: `us-west1` / `us-central1` / `us-east1`
+- OS: Ubuntu LTS
+- 永続化: VMローカルディスク（`data/history.json`）
+
+### 6.2 サービス管理
+
+- サービス名: `gemini-bot`
+- 定義: `/etc/systemd/system/gemini-bot.service`
+- 自動再起動: `Restart=always`
+- 自動起動: `systemctl enable gemini-bot`
+
+### 6.3 監視
+
+- 稼働確認: `systemctl status gemini-bot`
+- ログ監視: `journalctl -u gemini-bot -f`
+- 料金監視: GCP Billing Budget Alert
+
+## 7. セキュリティ・運用注意
+
+- `.env`、`system_prompt.txt`、`data/history.json` はGitへ含めない
+- APIキー・トークン流出時は即時ローテーション
+- `data/history.json` は個人データを含みうるため扱いに注意
+- 複数VM運用やスケールアウト時は外部データストアへ移行する

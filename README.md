@@ -1,68 +1,177 @@
 # gemini-bot-py
-Pythonで実装したDiscord Botです。Gemini APIを活用し、会話履歴の保持、リアルタイム検索を実現しています。ツール開発によって将来的ににエージェント化したいです。
-JSで実装しているGEMINI-BOTのPython版。
 
-ちなみに本アプリはdiscord上でpockyと言う名前で実装。pockyはうちで飼ってるオカメインコ。
+`discord.py` で実装した Gemini 連携 Discord Bot です。  
+本リポジトリは **GCP（Compute Engine）常時運用**を前提にしています。
 
-## 実装済み機能
+- コマンド: `/ask`, `/pocky`
+- 応答生成: Gemini API (`generateContent`)
+- 履歴保存: `data/history.json`（ユーザー単位・最新N件）
+- サーバー制限: `.env` の `DISCORD_SERVER_ID` のみ実行許可
 
-- Discord Slash Command (`/ask`) を受け取って Gemini API に問い合わせ
-- 先に defer してから応答を書き換え（Discordの3秒制限対策）
-- ユーザー単位の会話履歴を保持（JSONファイル永続化、直近N件）
-- `tools: [{"google_search": {}}]` を使った Gemini 呼び出し
-- サーバーID制限（指定サーバーのみ利用可）
-- `FAMILY_IDxx` / `FAMILY_NAMExx` による表示名マッピング
+詳細設計は `docs/system-specification.md` を参照してください。
 
-## 必要環境
+## 1. 前提
 
+- Google Cloud プロジェクト作成済み
+- Discord Bot アプリ作成済み（`DISCORD_TOKEN` 取得済み）
+- Gemini API キー取得済み
 - Python 3.11+
-- Discordアプリ作成済み（Bot tokenを取得済み）
-- Gemini APIキー
 
-## セットアップ
+## 2. Discord側の設定手順
 
-1. 依存インストール
+### 2.1 Developer Portal で Bot を確認
+
+Discord Developer Portal の対象アプリで以下を確認します。
+
+- `Bot` タブで Bot が有効
+- `TOKEN` を再発行または取得（`.env` の `DISCORD_TOKEN` に設定）
+
+### 2.2 OAuth2 で招待 URL を作成
+
+`OAuth2 > URL Generator` で以下を選択します。
+
+- Scopes: `bot`, `applications.commands`
+- Bot Permissions: 最低限 `View Channels`, `Send Messages`, `Read Message History`
+
+生成された URL で、利用したいサーバーに Bot を招待します。
+
+### 2.3 サーバー ID（Guild ID）を取得
+
+- Discord の開発者モードを有効化
+- 対象サーバーを右クリックして「サーバーIDをコピー」
+- `.env` の `DISCORD_SERVER_ID` に設定
+
+### 2.4 Interactions Endpoint URL の確認
+
+このアプリは `discord.py` の Gateway 方式で動作します。  
+`General Information` の `INTERACTIONS ENDPOINT URL` は空（未設定）にしてください。  
+Webhook URL が設定されたままだと、コマンドが Python Bot 側に届かない場合があります。
+
+## 3. GCPでの運用開始手順
+
+### 3.1 VM作成（Free Tier想定）
+
+GCP Console: `Compute Engine > VM instances > Create instance`
+
+- Region: `us-west1` / `us-central1` / `us-east1`
+- Machine: `e2-micro`
+- Provisioning model: `Standard`
+- Boot disk type: `Standard persistent disk (pd-standard)`
+- Boot disk size: `30GB` 以下（例: `10GB`）
+- Firewall: `Allow HTTP traffic` / `Allow HTTPS traffic` はオフ
+
+### 3.2 SSH接続後のセットアップ
 
 ```bash
-python -m venv .venv
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+
+cd /opt
+sudo git clone https://github.com/s-kirii/gemini-bot-py.git
+sudo chown -R $USER:$USER /opt/gemini-bot-py
+cd /opt/gemini-bot-py
+
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-2. 設定ファイル作成
-
-```bash
 cp .env.example .env
 cp system_prompt.txt.sample system_prompt.txt
 ```
 
-3. `.env` を編集
+`.env` に最低限設定:
 
-- 必須: `DISCORD_TOKEN`, `DISCORD_SERVER_ID`, `GEMINI_API_KEY`
-- 任意: `GEMINI_MODEL`, `HISTORY_PATH`, `MAX_HISTORY_ITEMS`, `FAMILY_IDxx/FAMILY_NAMExx`
+- `DISCORD_TOKEN`
+- `DISCORD_SERVER_ID`
+- `GEMINI_API_KEY`
 
-## 起動
+### 3.3 手動起動確認
 
 ```bash
+cd /opt/gemini-bot-py
+source .venv/bin/activate
 python main.py
 ```
 
-起動時に `DISCORD_SERVER_ID` のギルドへ `/ask` を同期します。
+Discord で `/pocky` か `/ask` が応答することを確認し、`Ctrl+C` で停止します。
 
-## コマンド
+### 3.4 systemdで常駐化
 
-- `/ask message:<質問文>`
+```bash
+sudo tee /etc/systemd/system/gemini-bot.service >/dev/null <<'EOF2'
+[Unit]
+Description=Gemini Discord Bot (Python)
+After=network-online.target
+Wants=network-online.target
 
-## ファイル構成
+[Service]
+Type=simple
+User=__YOUR_USER__
+WorkingDirectory=/opt/gemini-bot-py
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gemini-bot-py/.venv/bin/python /opt/gemini-bot-py/main.py
+Restart=always
+RestartSec=5
 
-- `main.py`: エントリポイント
-- `bot/config.py`: 環境変数読み込み
-- `bot/discord_bot.py`: Discordイベント処理
-- `bot/gemini_client.py`: Gemini API呼び出し
-- `bot/history_store.py`: 会話履歴永続化
-- `system_prompt.txt`: システムプロンプト（ローカル管理）
+[Install]
+WantedBy=multi-user.target
+EOF2
 
-## 備考
+sudo sed -i "s/__YOUR_USER__/$(whoami)/" /etc/systemd/system/gemini-bot.service
+sudo systemctl daemon-reload
+sudo systemctl enable gemini-bot
+sudo systemctl start gemini-bot
+```
 
-- 既存JS版の `DISCORD_PUBLIC_KEY` はHTTPインタラクション署名検証用です。
-  Python版はGateway接続方式のため、実行時には使用していません。
+状態確認:
+
+```bash
+sudo systemctl status gemini-bot
+journalctl -u gemini-bot -f
+```
+
+`active (running)` と `connected to Gateway` が出ていれば稼働中です。
+
+## 4. 更新手順（デプロイ）
+
+```bash
+cd /opt/gemini-bot-py
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart gemini-bot
+```
+
+## 5. 運用コマンド
+
+- 起動: `sudo systemctl start gemini-bot`
+- 停止: `sudo systemctl stop gemini-bot`
+- 再起動: `sudo systemctl restart gemini-bot`
+- 自動起動有効: `sudo systemctl enable gemini-bot`
+- 自動起動無効: `sudo systemctl disable gemini-bot`
+- ログ追跡: `journalctl -u gemini-bot -f`
+
+## 6. 環境変数
+
+必須:
+- `DISCORD_TOKEN`
+- `DISCORD_SERVER_ID`
+- `GEMINI_API_KEY`
+
+任意:
+- `GEMINI_MODEL`（default: `gemini-2.5-flash`）
+- `SYSTEM_PROMPT_PATH`（default: `system_prompt.txt`）
+- `HISTORY_PATH`（default: `data/history.json`）
+- `MAX_HISTORY_ITEMS`（default: `10`）
+- `FAMILY_IDxx` / `FAMILY_NAMExx`
+
+## 7. セキュリティ運用
+
+- `.env`, `system_prompt.txt`, `data/history.json` は Git 管理しない
+- 秘密情報を誤って公開した場合は即時ローテーション
+- GCP Billing Budget を設定して超過通知を受ける
+
+## 8. 補足
+
+- `DISCORD_PUBLIC_KEY` は Python 版では未使用（Gateway方式のため）
+- 他サーバーでコマンドが見えても、実行時に `DISCORD_SERVER_ID` で拒否されます
