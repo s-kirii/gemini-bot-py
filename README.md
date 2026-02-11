@@ -7,6 +7,7 @@
 - 応答生成: Gemini API (`generateContent`)
 - 履歴保存: `data/history.json`（ユーザー単位・最新N件）
 - サーバー制限: `.env` の `DISCORD_SERVER_ID` のみ実行許可
+- Google Calendar 操作: 予定の登録・更新・削除・照会（Geminiが依頼文から自動判定）
 
 詳細設計は `docs/system-specification.md` を参照してください。
 
@@ -84,6 +85,13 @@ cp system_prompt.txt.sample system_prompt.txt
 - `DISCORD_TOKEN`
 - `DISCORD_SERVER_ID`
 - `GEMINI_API_KEY`
+
+Google Calendar 機能を使う場合は追加で以下を設定:
+
+- `GOOGLE_CALENDAR_ID`
+- `GOOGLE_SERVICE_ACCOUNT_FILE`  
+  例: `/opt/gemini-bot-py/secrets/service-account.json`
+- `CALENDAR_TIMEZONE`（任意、default: `Asia/Tokyo`）
 
 ### 3.3 手動起動確認
 
@@ -164,6 +172,9 @@ sudo systemctl restart gemini-bot
 - `HISTORY_PATH`（default: `data/history.json`）
 - `MAX_HISTORY_ITEMS`（default: `10`）
 - `FAMILY_IDxx` / `FAMILY_NAMExx`
+- `GOOGLE_CALENDAR_ID`（Calendar機能を有効化する場合は必須）
+- `GOOGLE_SERVICE_ACCOUNT_FILE`（または `GOOGLE_APPLICATION_CREDENTIALS`）
+- `CALENDAR_TIMEZONE`（default: `Asia/Tokyo`）
 
 ## 7. セキュリティ運用
 

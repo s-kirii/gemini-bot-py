@@ -5,6 +5,7 @@ import logging
 
 import aiohttp
 
+from bot.calendar_service import GoogleCalendarService
 from bot.config import ConfigError, load_config
 from bot.discord_bot import GeminiDiscordBot
 from bot.gemini_client import GeminiClient
@@ -28,6 +29,27 @@ async def async_main() -> None:
         raise ConfigError(f"System prompt file is empty: {config.system_prompt_path}")
 
     history_store = HistoryStore(config.history_path)
+    calendar_service = None
+
+    if config.google_calendar_id or config.google_service_account_file:
+        if not config.google_calendar_id:
+            raise ConfigError(
+                "`GOOGLE_CALENDAR_ID` is required when Google Calendar integration is enabled."
+            )
+        if not config.google_service_account_file:
+            raise ConfigError(
+                "`GOOGLE_SERVICE_ACCOUNT_FILE` (or GOOGLE_APPLICATION_CREDENTIALS) is required when Google Calendar integration is enabled."
+            )
+        if not config.google_service_account_file.exists():
+            raise ConfigError(
+                f"Google service account file not found: {config.google_service_account_file}"
+            )
+
+        calendar_service = GoogleCalendarService(
+            calendar_id=config.google_calendar_id,
+            service_account_file=str(config.google_service_account_file),
+            calendar_timezone=config.calendar_timezone,
+        )
 
     async with aiohttp.ClientSession() as session:
         gemini_client = GeminiClient(
@@ -35,6 +57,7 @@ async def async_main() -> None:
             model=config.gemini_model,
             system_prompt=system_prompt,
             session=session,
+            calendar_service=calendar_service,
         )
         bot = GeminiDiscordBot(config, history_store, gemini_client)
         await bot.start(config.discord_token)

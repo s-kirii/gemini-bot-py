@@ -21,6 +21,9 @@ class AppConfig:
     history_path: Path
     max_history_items: int
     family_name_map: dict[str, str]
+    google_calendar_id: str | None
+    google_service_account_file: Path | None
+    calendar_timezone: str
 
 
 class ConfigError(RuntimeError):
@@ -60,6 +63,16 @@ def load_config() -> AppConfig:
     system_prompt_path = Path(os.getenv("SYSTEM_PROMPT_PATH", "system_prompt.txt"))
     history_path = Path(os.getenv("HISTORY_PATH", "data/history.json"))
     max_history_items = int(os.getenv("MAX_HISTORY_ITEMS", "10"))
+    google_calendar_id = os.getenv("GOOGLE_CALENDAR_ID")
+
+    service_account_path_raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    if not service_account_path_raw:
+        service_account_path_raw = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+    google_service_account_file = (
+        Path(service_account_path_raw) if service_account_path_raw else None
+    )
+    calendar_timezone = os.getenv("CALENDAR_TIMEZONE", "Asia/Tokyo")
 
     if max_history_items < 2:
         raise ConfigError("`MAX_HISTORY_ITEMS` must be at least 2.")
@@ -73,4 +86,7 @@ def load_config() -> AppConfig:
         history_path=history_path,
         max_history_items=max_history_items,
         family_name_map=_build_family_map(),
+        google_calendar_id=google_calendar_id,
+        google_service_account_file=google_service_account_file,
+        calendar_timezone=calendar_timezone,
     )

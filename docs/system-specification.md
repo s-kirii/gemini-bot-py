@@ -11,6 +11,7 @@
 - Discord スラッシュコマンド（`/ask`, `/pocky`）を処理
 - Gemini API で応答生成（`google_search` ツール有効）
 - 会話履歴を `data/history.json` に保存
+- Google Calendar の予定登録・更新・削除・照会
 - 指定サーバー（`DISCORD_SERVER_ID`）以外は実行拒否
 - GCP VM 上で `systemd` 常駐運用
 
@@ -26,6 +27,7 @@ flowchart LR
   BOT[GeminiDiscordBot]
   GEM[Gemini API]
   FILE[(data/history.json)]
+  CAL[Google Calendar API]
   ENV[.env / system_prompt.txt]
 
   U --> DC
@@ -36,6 +38,7 @@ flowchart LR
   APP --> BOT
   BOT --> GEM
   BOT --> FILE
+  BOT --> CAL
 ```
 
 ## 3. リポジトリ構成と役割
@@ -51,6 +54,9 @@ flowchart LR
   - Interaction処理（defer、履歴、Gemini、返信）
 - `bot/gemini_client.py`
   - Gemini `generateContent` 呼び出し
+  - カレンダー操作要否の判定、実行結果の返答整形
+- `bot/calendar_service.py`
+  - Google Calendar API の登録・更新・削除・照会
 - `bot/history_store.py`
   - JSON履歴の読み書き
 - `README.md`
@@ -169,6 +175,8 @@ flowchart LR
   - `prompt: str`
   - `history: list[dict[str, Any]]`
 - 処理:
+  - カレンダー操作が必要か Gemini で判定
+  - 必要なら Calendar API を実行して結果を返答文へ反映
   - `generateContent` に `system_instruction`, `contents`, `tools` を送信
   - HTTP失敗時に `RuntimeError`
 - 戻り値:
@@ -179,7 +187,27 @@ flowchart LR
 - 例外:
   - `candidates` 不在・空本文で `RuntimeError`
 
-### 4.5 `bot/history_store.py`
+### 4.5 `bot/calendar_service.py`
+
+#### `class GoogleCalendarService`
+- 役割: Google Calendar API 呼び出しを集約
+- 認証: サービスアカウントJSON（`GOOGLE_SERVICE_ACCOUNT_FILE`）
+
+#### `list_events(time_min, time_max, query, max_results) -> dict[str, Any]`
+- 役割: 予定一覧の取得
+
+#### `create_event(summary, start, end, description, location, timezone_name) -> dict[str, Any]`
+- 役割: 予定作成
+- 備考: `start/end` は ISO8601/RFC3339 を前提
+
+#### `update_event(...) -> dict[str, Any]`
+- 役割: 予定更新
+- 備考: `event_id` 未指定時は `query` で候補を探索
+
+#### `delete_event(event_id, query, time_min, time_max) -> dict[str, Any]`
+- 役割: 予定削除
+- 備考: `event_id` 未指定時は `query` で候補を探索
+### 4.6 `bot/history_store.py`
 
 #### `class HistoryStore`
 
@@ -237,6 +265,7 @@ sequenceDiagram
   participant Store as HistoryStore
   participant File as data/history.json
   participant Gemini as Gemini API
+  participant Cal as Google Calendar API
 
   User->>Disc: /pocky message:...
   Disc->>Bot: interaction
@@ -245,8 +274,14 @@ sequenceDiagram
   Bot->>Store: get(user_id)
   Store->>File: read
   File-->>Store: history
-  Bot->>Gemini: generateContent(system + history + prompt)
-  Gemini-->>Bot: answer
+  Bot->>Gemini: 判定 + 応答生成
+  alt カレンダー操作あり
+    Gemini-->>Bot: action(create/update/delete/list)
+    Bot->>Cal: calendar operation
+    Cal-->>Bot: operation result
+  else 通常会話
+    Gemini-->>Bot: answer
+  end
   Bot->>Store: append_turn(...)
   Store->>File: write
   Bot->>Disc: edit_original_response
@@ -319,6 +354,7 @@ sequenceDiagram
 ## 7. セキュリティ・運用注意
 
 - `.env`、`system_prompt.txt`、`data/history.json` はGitへ含めない
+- `GOOGLE_SERVICE_ACCOUNT_FILE` で指定する秘密鍵JSONもGitへ含めない
 - APIキー・トークン流出時は即時ローテーション
 - `data/history.json` は個人データを含みうるため扱いに注意
 - 複数VM運用やスケールアウト時は外部データストアへ移行する
