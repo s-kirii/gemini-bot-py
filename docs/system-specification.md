@@ -253,6 +253,47 @@ sequenceDiagram
   Disc-->>User: final message
 ```
 
+### 5.3 関数・クラス単位のデータ受け渡し（ユーザー入力から返信まで）
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor User as Discord User
+  participant D as Discord API
+  participant Cmd as ask_command/pocky_command
+  participant H as GeminiDiscordBot._handle_ask()
+  participant N as _resolve_display_name()
+  participant S as HistoryStore.get()
+  participant G as GeminiClient.generate_response()
+  participant X as _extract_text()
+  participant A as HistoryStore.append_turn()
+
+  User->>D: Slash command (message)
+  D->>Cmd: Interaction + options.message
+  Cmd->>H: _handle_ask(interaction, message)
+
+  Note over H: 1) guild_id を検証\n2) defer(thinking=True)
+  H->>N: _resolve_display_name(interaction.user)
+  N-->>H: display_name
+
+  Note over H: full_prompt = \"送信者: {display_name}\\n内容: {message}\"
+  H->>S: get(user_id)
+  S-->>H: history[list[role/parts]]
+
+  H->>G: generate_response(full_prompt, history)
+  Note over G: payload = {system_instruction, contents, tools}
+  G->>X: _extract_text(api_json)
+  X-->>G: ai_response(str)
+  G-->>H: ai_response(str)
+
+  H->>A: append_turn(user_id, full_prompt, ai_response, max_items)
+  A-->>H: updated_history
+
+  Note over H: final_response = \"> {message}\\n{ai_response}\"\n_fit_discord_message() で 2000 文字制限対応
+  H->>D: edit_original_response(content=final_response)
+  D-->>User: 最終返信
+```
+
 ## 6. GCP運用仕様
 
 ### 6.1 インフラ要件（推奨）
