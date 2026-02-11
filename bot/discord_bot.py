@@ -35,13 +35,28 @@ class GeminiDiscordBot(commands.Bot):
         @self.tree.command(
             name="ask",
             description="Geminiに質問します",
-            guild=guild,
         )
         @app_commands.describe(message="質問内容")
         async def ask_command(interaction: discord.Interaction, message: str) -> None:
             await self._handle_ask(interaction, message)
 
-        await self.tree.sync(guild=guild)
+        @self.tree.command(
+            name="pocky",
+            description="Geminiに質問します",
+        )
+        @app_commands.describe(message="質問内容")
+        async def pocky_command(interaction: discord.Interaction, message: str) -> None:
+            await self._handle_ask(interaction, message)
+
+        # Legacy global command and new guild command both resolve during migration.
+        self.tree.copy_global_to(guild=guild)
+        guild_synced = await self.tree.sync(guild=guild)
+        global_synced = await self.tree.sync()
+        logger.info(
+            "Synced app commands. guild=%s, global=%s",
+            [cmd.name for cmd in guild_synced],
+            [cmd.name for cmd in global_synced],
+        )
 
     async def _handle_ask(self, interaction: discord.Interaction, message: str) -> None:
         if interaction.guild_id != self._config.discord_server_id:
@@ -75,7 +90,7 @@ class GeminiDiscordBot(commands.Bot):
 
             await interaction.edit_original_response(content=final_response)
         except Exception as exc:
-            logger.exception("Failed to handle /ask command")
+            logger.exception("Failed to handle app command")
             error_message = _fit_discord_message(f"オカメパニック: {exc}")
             await interaction.edit_original_response(content=error_message)
 
