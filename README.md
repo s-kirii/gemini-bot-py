@@ -2,6 +2,8 @@
 Pythonで実装したDiscord Botです。Gemini APIを活用し、会話履歴の保持、リアルタイム検索を実現しています。ツール開発によって将来的ににエージェント化したいです。
 JSで実装しているGEMINI-BOTのPython版。
 
+ちなみに本アプリはdiscord上でpockyと言う名前で実装。pockyはうちで飼ってるオカメインコ。
+
 ## 実装済み機能
 
 - Discord Slash Command (`/ask`) を受け取って Gemini API に問い合わせ
