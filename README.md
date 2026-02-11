@@ -1,6 +1,6 @@
 # gemini-bot-py
 
-`discord.py` で実装した Gemini 連携 Discord Bot です。家庭内で使用しているDiscordサーバー内で運用しています。pockyと言うオカメインコを飼っているのでシステムプロンプトからpockyの性格をインストールしてpockyと思って話しかけています。かわいいです。
+`discord.py` で実装した Gemini 連携 Discord Bot です。
 本リポジトリは **GCP（Compute Engine）常時運用**を前提にしています。
 
 - コマンド: `/ask`, `/pocky`
@@ -175,3 +175,4 @@ sudo systemctl restart gemini-bot
 
 - `DISCORD_PUBLIC_KEY` は Python 版では未使用（Gateway方式のため）
 - 他サーバーでコマンドが見えても、実行時に `DISCORD_SERVER_ID` で拒否されます
+- 家庭内で使用しているDiscordサーバー内での運用のため開発しました。pockyと言うオカメインコを飼っているのでシステムプロンプトからpockyの性格をインストールしてpockyと思って話しかけています。かわいいです。コマンド名にpockyとあるのはそう言うことです。
