@@ -9,6 +9,9 @@ import aiohttp
 
 from .calendar_service import CalendarOperationError, GoogleCalendarService
 
+GEMINI_REQUEST_TIMEOUT_SECONDS = 45
+CALENDAR_OPERATION_TIMEOUT_SECONDS = 30
+
 
 CALENDAR_PLANNER_SYSTEM_PROMPT = """
 あなたはDiscord Botのカレンダー操作プランナーです。
@@ -114,7 +117,7 @@ class GeminiClient:
 
         try:
             if action.action == "list":
-                return await asyncio.to_thread(
+                return await self._run_calendar_call(
                     self._calendar_service.list_events,
                     action.args.get("time_min"),
                     action.args.get("time_max"),
@@ -123,7 +126,7 @@ class GeminiClient:
                 )
 
             if action.action == "create":
-                return await asyncio.to_thread(
+                return await self._run_calendar_call(
                     self._calendar_service.create_event,
                     summary=str(action.args.get("summary", "")).strip(),
                     start=str(action.args.get("start", "")).strip(),
@@ -134,7 +137,7 @@ class GeminiClient:
                 )
 
             if action.action == "update":
-                return await asyncio.to_thread(
+                return await self._run_calendar_call(
                     self._calendar_service.update_event,
                     event_id=_opt_str(action.args.get("event_id")),
                     query=_opt_str(action.args.get("query")),
@@ -149,7 +152,7 @@ class GeminiClient:
                 )
 
             if action.action == "delete":
-                return await asyncio.to_thread(
+                return await self._run_calendar_call(
                     self._calendar_service.delete_event,
                     event_id=_opt_str(action.args.get("event_id")),
                     query=_opt_str(action.args.get("query")),
@@ -160,6 +163,11 @@ class GeminiClient:
             return {"status": "error", "message": "未対応のカレンダー操作です。"}
         except (CalendarOperationError, ValueError) as exc:
             return {"status": "error", "message": str(exc)}
+        except asyncio.TimeoutError:
+            return {
+                "status": "error",
+                "message": "Google Calendar処理がタイムアウトしました。時間をおいて再試行してください。",
+            }
 
     async def _call_generate_content(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = (
@@ -167,11 +175,18 @@ class GeminiClient:
             f"{self._model}:generateContent?key={self._api_key}"
         )
 
-        async with self._session.post(url, json=payload) as response:
+        timeout = aiohttp.ClientTimeout(total=GEMINI_REQUEST_TIMEOUT_SECONDS)
+        async with self._session.post(url, json=payload, timeout=timeout) as response:
             if response.status >= 400:
                 body = await response.text()
                 raise RuntimeError(f"Gemini API error {response.status}: {body}")
             return await response.json()
+
+    async def _run_calendar_call(self, func, *args, **kwargs) -> dict[str, Any]:
+        return await asyncio.wait_for(
+            asyncio.to_thread(func, *args, **kwargs),
+            timeout=CALENDAR_OPERATION_TIMEOUT_SECONDS,
+        )
 
 
 def _opt_str(value: Any) -> str | None:
