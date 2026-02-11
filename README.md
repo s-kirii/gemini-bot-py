@@ -1,6 +1,6 @@
 # gemini-bot-py
-
-`/Users/kiriishin/GitHub/gemini-bot` のCloudflare Workers版と同等の処理を、Python (`discord.py`) で実装したDiscord Botです。
+Pythonで実装したDiscord Botです。Gemini APIを活用し、会話履歴の保持、リアルタイム検索を実現しています。ツール開発によって将来的ににエージェント化したいです。
+JSで実装しているGEMINI-BOTのPython版。
 
 ## 実装済み機能
 
