@@ -4,4 +4,4 @@ __pycache__/
 .env
 system_prompt.txt
 data/history.json
-secrets/
+secrets/*
